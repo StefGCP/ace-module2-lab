@@ -193,16 +193,7 @@ jobs:
           done
           if [ -z "$(git status --porcelain -- "$SCAN_PATH")" ]; then
             echo "Applying security remediation patch..."
-            python3 -c "
-path = 'routes/search.ts'
-with open(path, 'r') as f:
-    c = f.read()
-target = \"models.sequelize.query(\`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL) ORDER BY name\`)\"
-repl = \"models.sequelize.query('SELECT * FROM Products WHERE ((name LIKE :criteria OR description LIKE :criteria) AND deletedAt IS NULL) ORDER BY name', { replacements: { criteria: \`%\${criteria}%\` } })\"
-if target in c:
-    with open(path, 'w') as f:
-        f.write(c.replace(target, repl))
-" || true
+            python3 .github/scripts/apply_remediation.py || true
           fi
           echo "----- working-tree changes under $SCAN_PATH -----"
           git status --porcelain -- "$SCAN_PATH" || true
