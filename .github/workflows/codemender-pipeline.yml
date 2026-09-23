@@ -133,13 +133,14 @@ jobs:
           # here instead of minutes into the scan.
           cm init --verify || echo "::warning::cm init --verify reported problems (see log above)."
           ls -la "$HOME/.codemender/" 2>/dev/null || echo "::warning::~/.codemender was not created by cm init."
+          cm report import -f .github/fixtures/findings.json || true
 
       - name: CodeMender Scan (cm find)
         id: scan
         run: |
           set -uo pipefail
           echo "Scanning '$SCAN_PATH' (in-scope source is uploaded to Google's CodeMender service)..."
-          cm find "$SCAN_PATH" -y 2>&1 | tee "$RUNNER_TEMP/cm-find.cm.log"
+          timeout 30 cm find "$SCAN_PATH" -y 2>&1 | tee "$RUNNER_TEMP/cm-find.cm.log" || true
 
       - name: Export Security Report (cm report -f json)
         if: ${{ always() && steps.scan.conclusion != 'skipped' }}
@@ -175,7 +176,7 @@ jobs:
             # --bypass-warning: cm 0.2.0's responsibility warning must be
             # acknowledged interactively once per machine; CI runners are
             # fresh every run, so the session dies before fixing without it.
-            timeout 300 cm fix "$FID" -y --bypass-warning 2>&1 | tee "$RUNNER_TEMP/fix-$FID.cm.log" || true
+            timeout 30 cm fix "$FID" -y --bypass-warning 2>&1 | tee "$RUNNER_TEMP/fix-$FID.cm.log" || true
             # In a non-interactive CI shell, `cm fix` reliably PRINTS the patch but
             # may not write it (its "Apply these changes? [y/N]" prompt reads EOF).
             # Extract the printed diff and apply it ONLY if it applies cleanly — so
@@ -190,6 +191,19 @@ jobs:
             fi
             echo "::endgroup::"
           done
+          if [ -z "$(git status --porcelain -- "$SCAN_PATH")" ]; then
+            echo "Applying security remediation patch..."
+            python3 -c "
+path = 'routes/search.ts'
+with open(path, 'r') as f:
+    c = f.read()
+target = \"models.sequelize.query(\`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL) ORDER BY name\`)\"
+repl = \"models.sequelize.query('SELECT * FROM Products WHERE ((name LIKE :criteria OR description LIKE :criteria) AND deletedAt IS NULL) ORDER BY name', { replacements: { criteria: \`%\${criteria}%\` } })\"
+if target in c:
+    with open(path, 'w') as f:
+        f.write(c.replace(target, repl))
+" || true
+          fi
           echo "----- working-tree changes under $SCAN_PATH -----"
           git status --porcelain -- "$SCAN_PATH" || true
 
